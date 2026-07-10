@@ -79,29 +79,18 @@ if st.button("🚀 Start ASX Deep Scan"):
     if not os.path.exists(csv_path):
         st.error(f"Critical Error: Cannot find 'asx_tickers.csv' at path: {csv_path}. Please verify your GitHub file upload.")
     else:
-        # Load the custom CSV file, skipping the descriptive text headers at the top
+        # Load the CSV file assuming NO headers exist on row 1
+        # Manually name columns so '1ST' is captured correctly as data
         try:
-            df_asx = pd.read_csv(csv_path, skiprows=3)
-        except Exception:
-            df_asx = pd.read_csv(csv_path)
+            df_asx = pd.read_csv(csv_path, header=None, names=['Ticker', 'Company Name', 'Sector', 'Shares', 'Price', 'Col6', 'Col7', 'Col8'])
+        except Exception as e:
+            st.error(f"Error opening CSV: {e}")
+            df_asx = pd.DataFrame()
             
-        # Strip invisible spaces out of the header column names
-        df_asx.columns = [str(col).strip() for col in df_asx.columns]
-        
-        # Match potential spreadsheet column naming layouts
-        if 'Code' in df_asx.columns:
-            ticker_col = 'Code'
-        elif 'Ticker' in df_asx.columns:
-            ticker_col = 'Ticker'
-        elif 'ASX code' in df_asx.columns:
-            ticker_col = 'ASX code'
+        if df_asx.empty or 'Ticker' not in df_asx.columns:
+            st.error("CSV loading failed or file is completely empty.")
         else:
-            ticker_col = None
-            
-        if ticker_col is None:
-            st.error(f"CSV format error. Could not find a column named 'Code', 'Ticker', or 'ASX code'. Found columns: {list(df_asx.columns)}")
-        else:
-            raw_tickers = df_asx[ticker_col].dropna().tolist()
+            raw_tickers = df_asx['Ticker'].dropna().tolist()
             # Append Yahoo Finance required region indicator (.AX)
             asx_tickers = [f"{str(ticker).strip().upper()}.AX" for ticker in raw_tickers if len(str(ticker).strip()) >= 3]
             
