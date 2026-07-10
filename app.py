@@ -13,7 +13,7 @@ st.write("Scan your ASX list for companies with a P/E Ratio under 20 and downloa
 st.sidebar.header("Screener Filters")
 max_pe = st.sidebar.slider("Maximum P/E Ratio Cutoff", min_value=5, max_value=40, value=20)
 
-# 3. DIRECT PATH DETECTION FOR CSV LOADING (Looks in the root directory alongside app.py)
+# 3. DIRECT PATH DETECTION FOR CSV LOADING
 current_dir = os.path.dirname(os.path.abspath(__file__))
 csv_path = os.path.join(current_dir, "asx_tickers.csv")
 
@@ -32,7 +32,7 @@ def fetch_ticker_data(symbol, max_pe_filter):
         market_cap = info.get('marketCap', None)
         enterprise_value = info.get('enterpriseValue', None)
         npat = info.get('netIncomeToCommon', None)
-        ev_to_ebitda = info.get('enterpriseToEbitda', None) # Industry standard for EV:E
+        ev_to_ebitda = info.get('enterpriseToEbitda', None) # Industry standard proxy for EV:E
         
         # Calculate Net Debt (Total Debt - Cash)
         total_debt = info.get('totalDebt', 0) or 0
@@ -79,14 +79,27 @@ if st.button("🚀 Start ASX Deep Scan"):
     if not os.path.exists(csv_path):
         st.error(f"Critical Error: Cannot find 'asx_tickers.csv' at path: {csv_path}. Please verify your GitHub file upload.")
     else:
-        # Load your custom CSV file directly from the root folder
-        df_asx = pd.read_csv(csv_path)
+        # Load the custom CSV file, skipping the descriptive text headers at the top
+        try:
+            df_asx = pd.read_csv(csv_path, skiprows=3)
+        except Exception:
+            df_asx = pd.read_csv(csv_path) # Fallback if layout changes
+            
+        # Strip invisible spaces out of the header column names
+        df_asx.columns = [str(col).strip() for col in df_asx.columns]
         
-        # Match standard directory headers ('Ticker' or 'ASX code')
-        ticker_col = 'Ticker' if 'Ticker' in df_asx.columns else 'ASX code'
-        
-        if ticker_col not in df_asx.columns:
-            st.error(f"CSV format error. Could not find a column named 'Ticker' or 'ASX code'. Found columns: {list(df_asx.columns)}")
+        # Match potential spreadsheet column naming layouts ('Code', 'Ticker', or 'ASX code')
+        if 'Code' in df_asx.columns:
+            ticker_col = 'Code'
+        elif 'Ticker' in df_asx.columns:
+            ticker_col = 'Ticker'
+        elif 'ASX code' in df_asx.columns:
+            ticker_col = 'ASX code'
+        else:
+            ticker_col = None
+            
+        if ticker_col is None:
+            st.error(f"CSV format error. Could not find a column named 'Code', 'Ticker', or 'ASX code'. Found columns: {list(df_asx.columns)}")
         else:
             raw_tickers = df_asx[ticker_col].dropna().tolist()
             # Append Yahoo Finance required region indicator (.AX)
@@ -133,3 +146,4 @@ if st.button("🚀 Start ASX Deep Scan"):
                 )
             else:
                 st.warning("Scan complete. Zero companies found matching your chosen configuration rules.")
+ companies found matching your chosen configuration rules.")
