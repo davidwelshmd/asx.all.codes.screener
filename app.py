@@ -32,7 +32,7 @@ def fetch_ticker_data(symbol, max_pe_filter):
         market_cap = info.get('marketCap', None)
         enterprise_value = info.get('enterpriseValue', None)
         npat = info.get('netIncomeToCommon', None)
-        ev_to_ebitda = info.get('enterpriseToEbitda', None) # Industry standard proxy for EV:E
+        ev_to_ebitda = info.get('enterpriseToEbitda', None)
         
         # Calculate Net Debt (Total Debt - Cash)
         total_debt = info.get('totalDebt', 0) or 0
@@ -60,7 +60,7 @@ def fetch_ticker_data(symbol, max_pe_filter):
                         eps_3y_growth = round((((current_eps / prev_3y_eps) ** (1/3)) - 1) * 100, 2)
 
         return {
-            "Ticker": symbol.replace(".AX", ""), # Clean up .AX suffix for display
+            "Ticker": symbol.replace(".AX", ""),
             "Market Cap ($)": market_cap,
             "Net Debt ($)": net_debt,
             "Enterprise Value ($)": enterprise_value,
@@ -71,7 +71,7 @@ def fetch_ticker_data(symbol, max_pe_filter):
             "3Y EPS Growth (%)": eps_3y_growth
         }
     except Exception:
-        return None # Gracefully skip companies missing reporting data
+        return None
 
 # 5. EXECUTION INTERFACE
 if st.button("🚀 Start ASX Deep Scan"):
@@ -83,12 +83,12 @@ if st.button("🚀 Start ASX Deep Scan"):
         try:
             df_asx = pd.read_csv(csv_path, skiprows=3)
         except Exception:
-            df_asx = pd.read_csv(csv_path) # Fallback if layout changes
+            df_asx = pd.read_csv(csv_path)
             
         # Strip invisible spaces out of the header column names
         df_asx.columns = [str(col).strip() for col in df_asx.columns]
         
-        # Match potential spreadsheet column naming layouts ('Code', 'Ticker', or 'ASX code')
+        # Match potential spreadsheet column naming layouts
         if 'Code' in df_asx.columns:
             ticker_col = 'Code'
         elif 'Ticker' in df_asx.columns:
@@ -146,4 +146,3 @@ if st.button("🚀 Start ASX Deep Scan"):
                 )
             else:
                 st.warning("Scan complete. Zero companies found matching your chosen configuration rules.")
- companies found matching your chosen configuration rules.")
