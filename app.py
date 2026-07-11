@@ -114,11 +114,16 @@ if st.button("🚀 Start ASX Deep Scan"):
             
             if not df_raw_results.empty:
                 # Apply the user's P/E filter completely in-memory
+                            if not df_raw_results.empty:
+                # Force P/E Ratio to be strictly numeric, converting unparsable values into NaN
+                df_raw_results['P/E Ratio'] = pd.to_numeric(df_raw_results['P/E Ratio'], errors='coerce')
+                
+                # Apply the user's P/E filter safely
                 df_filtered = df_raw_results[
                     (df_raw_results['P/E Ratio'].notna()) & 
                     (df_raw_results['P/E Ratio'] < max_pe)
                 ].copy()
-                
+
                 # Round P/E ratio for clean visual presentation
                 df_filtered['P/E Ratio'] = df_filtered['P/E Ratio'].round(2)
                 
