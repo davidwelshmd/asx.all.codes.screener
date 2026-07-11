@@ -3,51 +3,66 @@ import pandas as pd
 import yfinance as yf
 import io
 import os
-import time  # Added for rate limiting
+import time
 
 # 1. PAGE LAYOUT CONFIGURATION
 st.set_page_config(page_title="ASX Equity Screener", layout="wide")
 st.title("📊 ASX Low P/E Valuation Screener")
-st.write("Scan your ASX list for companies with a P/E Ratio under 20 and download the clean dataset.")
+st.write("Select an alphabet group to scan your ASX list efficiently and avoid timeouts.")
 
 # 2. SIDEBAR PARAMETERS
 st.sidebar.header("Screener Filters")
+
+# Alphabet Group Selector to speed up execution
+ticker_range = st.sidebar.selectbox(
+    "Select Ticker Alphabet Group",
+    options=["A-G", "H-L", "M-Q", "R-V", "W-Z", "ALL (Slow)"],
+    index=0
+)
+
 max_pe = st.sidebar.slider("Maximum P/E Ratio Cutoff", min_value=5, max_value=40, value=20)
+
+# Helper function to map tickers to selected ranges
+def filter_by_alphabet(ticker, range_selection):
+    if range_selection == "ALL (Slow)":
+        return True
+    first_letter = str(ticker).strip().upper()[0]
+    if not first_letter.isalpha():
+        return False
+        
+    start_letter, end_letter = range_selection.split("-")
+    return start_letter <= first_letter <= end_letter
 
 # 3. DIRECT PATH DETECTION FOR CSV LOADING
 current_dir = os.path.dirname(os.path.abspath(__file__))
 csv_path = os.path.join(current_dir, "asx_tickers.csv")
 
-# 4. CACHED DATA FETCHING ENGINE (Fixes the rate-limiting and rerunning issue)
-@st.cache_data(show_spinner=False, ttl=3600)  # Caches results for 1 hour
-def get_all_asx_data(asx_tickers):
-    """Fetches ALL ticker data once and caches it to memory."""
+# 4. CACHED DATA FETCHING ENGINE 
+@st.cache_data(show_spinner=False, ttl=3600)  # Caches results for 1 hour per specific group combination
+def get_asx_data_for_batch(asx_tickers, range_label):
+    """Fetches ticker data for the filtered batch and caches it."""
     results = []
     
-    # Create a progress bar inside the cached function
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     for idx, symbol in enumerate(asx_tickers):
-        status_text.text(f"Scraping {symbol} ({idx + 1}/{len(asx_tickers)})...")
+        status_text.text(f"Scanning {symbol} ({idx + 1}/{len(asx_tickers)}) in Group {range_label}...")
         
         try:
             ticker = yf.Ticker(symbol)
             info = ticker.info
             
-            # Extract raw metrics safely
             pe_ratio = info.get('trailingPE', None)
             market_cap = info.get('marketCap', None)
             enterprise_value = info.get('enterpriseValue', None)
             npat = info.get('netIncomeToCommon', None)
             ev_to_ebitda = info.get('enterpriseToEbitda', None)
             
-            # Calculate Net Debt
             total_debt = info.get('totalDebt', 0) or 0
             total_cash = info.get('totalCash', 0) or 0
             net_debt = total_debt - total_cash
             
-            # Extract Historical Financials
             financials = ticker.financials
             eps_1y_growth = None
             eps_3y_growth = None
@@ -71,17 +86,15 @@ def get_all_asx_data(asx_tickers):
                 "Net Debt ($)": net_debt,
                 "Enterprise Value ($)": enterprise_value,
                 "NPAT ($)": npat,
-                "P/E Ratio": pe_ratio,  # Keep raw for filtering later
+                "P/E Ratio": pe_ratio,  
                 "EV/EBITDA (EV:E)": round(ev_to_ebitda, 2) if ev_to_ebitda else None,
                 "1Y EPS Growth (%)": eps_1y_growth,
                 "3Y EPS Growth (%)": eps_3y_growth
             })
             
-            # Polite scraping: pause 0.2 seconds between requests to avoid bans
-            time.sleep(0.2) 
+            time.sleep(0.2)  # Avoid aggressive anti-bot triggers
             
         except Exception:
-            # Skip broken tickers silently
             pass
             
         progress_bar.progress((idx + 1) / len(asx_tickers))
@@ -106,47 +119,48 @@ if st.button("🚀 Start ASX Deep Scan"):
             st.error("CSV loading failed or file is completely empty.")
         else:
             raw_tickers = df_asx['Ticker'].dropna().tolist()
-            asx_tickers = [f"{str(ticker).strip().upper()}.AX" for ticker in raw_tickers if len(str(ticker).strip()) >= 3]
             
-            # Fetch data (will load instantly from cache on second run!)
-            with st.spinner("Downloading data from Yahoo Finance... (This takes a while on the first run)"):
-                df_raw_results = get_all_asx_data(asx_tickers)
+            # Apply the alphabet filter to raw tickers BEFORE hitting Yahoo Finance
+            filtered_raw_tickers = [t for t in raw_tickers if filter_by_alphabet(t, ticker_range)]
+            asx_tickers = [f"{str(ticker).strip().upper()}.AX" for ticker in filtered_raw_tickers if len(str(ticker).strip()) >= 3]
             
-            if not df_raw_results.empty:
-                # Apply the user's P/E filter completely in-memory
-                            if not df_raw_results.empty:
-                # Force P/E Ratio to be strictly numeric, converting unparsable values into NaN
-                df_raw_results['P/E Ratio'] = pd.to_numeric(df_raw_results['P/E Ratio'], errors='coerce')
-                
-                # Apply the user's P/E filter safely
-                df_filtered = df_raw_results[
-                    (df_raw_results['P/E Ratio'].notna()) & 
-                    (df_raw_results['P/E Ratio'] < max_pe)
-                ].copy()
-
-                # Round P/E ratio for clean visual presentation
-                df_filtered['P/E Ratio'] = df_filtered['P/E Ratio'].round(2)
-                
-                st.subheader(f"Found {len(df_filtered)} Companies Matching Criteria")
-                
-                # Display Interactive UI Table Preview
-                st.dataframe(df_filtered.style.format({
-                    "Market Cap ($)": "{:,.0f}", 
-                    "Net Debt ($)": "{:,.0f}",
-                    "Enterprise Value ($)": "{:,.0f}",
-                    "NPAT ($)": "{:,.0f}"
-                }))
-                
-                # Setup In-Memory stream for clean spreadsheet extraction 
-                buffer = io.BytesIO()
-                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    df_filtered.to_excel(writer, index=False, sheet_name='ASX Deep Screen')
-                
-                st.download_button(
-                    label="📥 Download Filtered Results as Excel Spreadsheet",
-                    data=buffer.getvalue(),
-                    file_name="asx_low_pe_screener.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+            if not asx_tickers:
+                st.warning(f"No tickers found matching alphabet group: {ticker_range}")
             else:
-                st.warning("No data retrieved from the scan.")
+                with st.spinner(f"Downloading Group {ticker_range} from Yahoo Finance..."):
+                    # Passing ticker_range to the cache function treats each group as its own separate cache key
+                    df_raw_results = get_asx_data_for_batch(asx_tickers, ticker_range)
+                
+                if not df_raw_results.empty:
+                    # Fix the numeric type comparison crash safely
+                    df_raw_results['P/E Ratio'] = pd.to_numeric(df_raw_results['P/E Ratio'], errors='coerce')
+                    
+                    df_filtered = df_raw_results[
+                        (df_raw_results['P/E Ratio'].notna()) & 
+                        (df_raw_results['P/E Ratio'] < max_pe)
+                    ].copy()
+                    
+                    df_filtered['P/E Ratio'] = df_filtered['P/E Ratio'].round(2)
+                    
+                    st.subheader(f"Found {len(df_filtered)} Companies Matching Criteria (Group {ticker_range})")
+                    
+                    st.dataframe(df_filtered.style.format({
+                        "Market Cap ($)": "{:,.0f}", 
+                        "Net Debt ($)": "{:,.0f}",
+                        "Enterprise Value ($)": "{:,.0f}",
+                        "NPAT ($)": "{:,.0f}"
+                    }))
+                    
+                    buffer = io.BytesIO()
+                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                        df_filtered.to_excel(writer, index=False, sheet_name=f'ASX Group {ticker_range}')
+                    
+                    st.download_button(
+                        label=f"📥 Download Group {ticker_range} Spreadsheet",
+                        data=buffer.getvalue(),
+                        file_name=f"asx_low_pe_screener_{ticker_range}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.warning("No data retrieved from this specific scan group.")
+
