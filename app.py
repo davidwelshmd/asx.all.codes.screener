@@ -10,38 +10,42 @@ st.set_page_config(page_title="ASX Equity Screener", layout="wide")
 st.title("📊 ASX Low P/E Valuation Screener")
 st.write("Configure your filters below and press 'Run Screener' to scan your ASX list without timeouts.")
 
-# 2. SIDEBAR PARAMETERS (Wrapped inside a Form)
+# Initialize a custom session state tracker to safely govern the manual run button
+if "run_screener" not in st.session_state:
+    st.session_state.run_screener = False
+
+# 2. SIDEBAR PARAMETERS (Moved out of st.form to resolve the multiselect freeze bug)
 st.sidebar.header("Screener Filters")
 
-with st.sidebar.form("screener_form"):
-    # Alphabet Group Selector to speed up execution
-    ticker_range = st.selectbox(
-        "Select Ticker Alphabet Group",
-        options=["A-G", "H-L", "M-Q", "R-V", "W-Z", "ALL (Slow)"],
-        index=0
-    )
+ticker_range = st.sidebar.selectbox(
+    "Select Ticker Alphabet Group",
+    options=["A-G", "H-L", "M-Q", "R-V", "W-Z", "ALL (Slow)"],
+    index=0
+)
 
-    max_pe = st.slider("Maximum P/E Ratio Cutoff", min_value=5, max_value=40, value=20)
-    max_pb = st.slider("Maximum P/B Ratio Cutoff", min_value=0.1, max_value=10.0, value=2.0, step=0.1)
+max_pe = st.sidebar.slider("Maximum P/E Ratio Cutoff", min_value=5, max_value=40, value=20)
+max_pb = st.sidebar.slider("Maximum P/B Ratio Cutoff", min_value=0.1, max_value=10.0, value=2.0, step=0.1)
 
-    # Market Cap Category Filter
-    market_cap_options = [
-        "Under $100 Million",
-        "$100 - $500 Million",
-        "$500 - $1,500 Million",
-        "Over $1,500 Million"
-    ]
-    selected_mc_brackets = st.multiselect(
-        "Market Capitalisation Brackets",
-        options=market_cap_options,
-        default=market_cap_options
-    )
+# Market Cap Category Filter (Now fully clickable)
+market_cap_options = [
+    "Under $100 Million",
+    "$100 - $500 Million",
+    "$500 - $1,500 Million",
+    "Over $1,500 Million"
+]
+selected_mc_brackets = st.sidebar.multiselect(
+    "Market Capitalisation Brackets",
+    options=market_cap_options,
+    default=market_cap_options
+)
 
-    # Toggle: Filter Profitability
-    exclude_losses = st.toggle("Exclude Loss-Making Companies (NPAT < 0)", value=False)
-    
-    # THE TRIGGER BUTTON: Form submission stops the app from running prematurely
-    submit_button = st.form_submit_button("🚀 Run Screener", use_container_width=True)
+# Toggle: Filter Profitability
+exclude_losses = st.sidebar.toggle("Exclude Loss-Making Companies (NPAT < 0)", value=False)
+
+st.sidebar.markdown("---")
+# The Action Trigger Button
+if st.sidebar.button("🚀 Run Screener", use_container_width=True):
+    st.session_state.run_screener = True
 
 
 # Helper function to map tickers to selected ranges and ensure they are standard 3-digit tickers
@@ -137,10 +141,10 @@ def get_asx_data_for_batch(asx_tickers, range_label):
 
 # 5. LOADING AND EXECUTION LOGIC
 if os.path.exists(csv_path):
-    # Only execute code blocks if the user purposefully hit 'Run Screener'
-    if submit_button:
+    # Check if the execution flag is active in the session state
+    if st.session_state.run_screener:
         df_tickers = pd.read_csv(csv_path, header=None)
-        raw_ticker_list = df_tickers.iloc[:, 0].tolist()  # Explicitly grab first column as list
+        raw_ticker_list = df_tickers.iloc[:, 0].tolist()
         
         # Apply combined alphabet and length filtering
         filtered_tickers = [t for t in raw_ticker_list if filter_ticker(t, ticker_range)]
@@ -150,6 +154,9 @@ if os.path.exists(csv_path):
                 df_results = get_asx_data_for_batch(filtered_tickers, ticker_range)
                 
             if not df_results.empty:
+                # Reset run tracking flag so modifications to filters later don't trigger auto-runs
+                st.session_state.run_screener = False
+                
                 # Apply dynamic P/E and P/B filters
                 filtered_df = df_results[
                     (df_results["P/E Ratio"].isna() | (df_results["P/E Ratio"] <= max_pe)) &
@@ -199,8 +206,10 @@ if os.path.exists(csv_path):
                 )
                 
             else:
+                st.session_state.run_screener = False
                 st.warning("No data retrieved for this batch.")
         else:
+            st.session_state.run_screener = False
             st.warning("No tickers found matching this alphabet group and length condition.")
     else:
         st.info("💡 Adjust your filters in the sidebar and click **'Run Screener'** to start scanning.")
