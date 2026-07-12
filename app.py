@@ -39,15 +39,15 @@ selected_mc_brackets = st.sidebar.multiselect(
 exclude_losses = st.sidebar.toggle("Exclude Loss-Making Companies (NPAT < 0)", value=False)
 
 st.sidebar.markdown("---")
-# The Action Trigger Button (Fully detached from standard loops to stop UI freezes)
 run_clicked = st.sidebar.button("🚀 Run Screener", use_container_width=True)
 
 # Helper function to map tickers to selected ranges and ensure they are standard 3-digit tickers
 def filter_ticker(ticker, range_selection):
     ticker_str = str(ticker).strip().upper()
     
-    # Remove standard '.AX' suffix if present
-    base_ticker = ticker_str.split(".")[0]
+    # FIXED: Added the explicit [0] index key to safely unpack the isolated base ticker string
+    parts = ticker_str.split(".")
+    base_ticker = parts[0]
     
     # Enforce strict 3-digit rule (removes hybrids like WBCPL, MQGPF, or options)
     if len(base_ticker) != 3:
@@ -112,13 +112,11 @@ def get_asx_data_for_batch(asx_tickers, range_label):
             current_price = info.get('currentPrice', None)
             long_name = info.get('longName', symbol)
             div_yield = info.get('dividendYield', None)
-            
-            # FIXED: Added core valuation extraction variables
             ent_value = info.get('enterpriseValue', None)
             net_debt = info.get('netDebt', None)
             
             results.append({
-                "Ticker": symbol,
+                "Ticker": symbol.split(".")[0], # Keep display looking clean
                 "Company Name": long_name,
                 "Price": current_price,
                 "P/E Ratio": pe_ratio,
@@ -143,7 +141,6 @@ def get_asx_data_for_batch(asx_tickers, range_label):
 
 # 5. LOADING AND EXECUTION LOGIC
 if os.path.exists(csv_path):
-    # Store results to session state so they persist when toggling side options
     if run_clicked:
         df_tickers = pd.read_csv(csv_path, header=None)
         raw_ticker_list = df_tickers.iloc[:, 0].tolist()
@@ -157,11 +154,17 @@ if os.path.exists(csv_path):
         else:
             st.warning("No tickers found matching this alphabet group and length condition.")
 
-    # Render data if data exists inside session state memory
     if "raw_data" in st.session_state and st.session_state.raw_data is not None:
-        df_results = st.session_state.raw_data
+        df_results = st.session_state.raw_data.copy()
         
         if not df_results.empty:
+            # FIXED: Force conversions of structural evaluation column types to clean numeric targets.
+            # Any bad data blocks or string characters turn into safe NaN placeholders instead of crashing.
+            df_results["P/E Ratio"] = pd.to_numeric(df_results["P/E Ratio"], errors='coerce')
+            df_results["P/B Ratio"] = pd.to_numeric(df_results["P/B Ratio"], errors='coerce')
+            df_results["Market Cap"] = pd.to_numeric(df_results["Market Cap"], errors='coerce')
+            df_results["NPAT (TTM)"] = pd.to_numeric(df_results["NPAT (TTM)"], errors='coerce')
+            
             # Apply dynamic P/E and P/B filters
             filtered_df = df_results[
                 (df_results["P/E Ratio"].isna() | (df_results["P/E Ratio"] <= max_pe)) &
@@ -180,7 +183,6 @@ if os.path.exists(csv_path):
                 ]
             
             # 6. STREAMLIT DATA FRAME COLUMNS CONFIGURATION
-            # Displays all metrics alongside newly assigned configuration columns
             st.dataframe(
                 filtered_df, 
                 use_container_width=True,
