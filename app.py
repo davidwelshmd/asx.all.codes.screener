@@ -44,12 +44,9 @@ run_clicked = st.sidebar.button("🚀 Run Screener", use_container_width=True)
 # Helper function to map tickers to selected ranges and ensure they are standard 3-digit tickers
 def filter_ticker(ticker, range_selection):
     ticker_str = str(ticker).strip().upper()
-    
-    # FIXED: Added the explicit [0] index key to safely unpack the isolated base ticker string
     parts = ticker_str.split(".")
     base_ticker = parts[0]
     
-    # Enforce strict 3-digit rule (removes hybrids like WBCPL, MQGPF, or options)
     if len(base_ticker) != 3:
         return False
         
@@ -97,7 +94,6 @@ def get_asx_data_for_batch(asx_tickers, range_label):
     status_text = st.empty()
     
     for idx, symbol in enumerate(asx_tickers):
-        # Format ticker string for Yahoo Finance if missing suffix
         formatted_symbol = symbol if symbol.endswith(".AX") else f"{symbol}.AX"
         status_text.text(f"Scanning {formatted_symbol} ({idx + 1}/{len(asx_tickers)}) in Group {range_label}...")
         
@@ -111,12 +107,33 @@ def get_asx_data_for_batch(asx_tickers, range_label):
             npat = info.get('netIncomeToCommon', None)
             current_price = info.get('currentPrice', None)
             long_name = info.get('longName', symbol)
+            
+            # FIXED: Extracted dividend yield is divided by 100 to map accurately to percentage views
             div_yield = info.get('dividendYield', None)
+            if div_yield is not None:
+                div_yield = float(div_yield)
+                # If yfinance yields integer values like 7.73 instead of 0.0773, normalize it
+                if div_yield > 1.0:
+                    div_yield = div_yield / 100.0
+                
             ent_value = info.get('enterpriseValue', None)
-            net_debt = info.get('netDebt', None)
+            
+            # FIXED: Explicitly sanitize dictionary outputs to calculate the Net Debt formula
+            total_debt = info.get('totalDebt', 0)
+            total_cash = info.get('totalCash', 0)
+            
+            # Force None values to zero for calculation purposes
+            td = float(total_debt) if (total_debt and not pd.isna(total_debt)) else 0.0
+            tc = float(total_cash) if (total_cash and not pd.isna(total_cash)) else 0.0
+            
+            # If both fields are empty, keep Net Debt as unknown
+            if td == 0.0 and tc == 0.0:
+                net_debt = None
+            else:
+                net_debt = td - tc
             
             results.append({
-                "Ticker": symbol.split(".")[0], # Keep display looking clean
+                "Ticker": symbol.split(".")[0],
                 "Company Name": long_name,
                 "Price": current_price,
                 "P/E Ratio": pe_ratio,
@@ -145,7 +162,6 @@ if os.path.exists(csv_path):
         df_tickers = pd.read_csv(csv_path, header=None)
         raw_ticker_list = df_tickers.iloc[:, 0].tolist()
         
-        # Apply combined alphabet and length filtering
         filtered_tickers = [t for t in raw_ticker_list if filter_ticker(t, ticker_range)]
         
         if filtered_tickers:
@@ -158,36 +174,35 @@ if os.path.exists(csv_path):
         df_results = st.session_state.raw_data.copy()
         
         if not df_results.empty:
-            # FIXED: Force conversions of structural evaluation column types to clean numeric targets.
-            # Any bad data blocks or string characters turn into safe NaN placeholders instead of crashing.
             df_results["P/E Ratio"] = pd.to_numeric(df_results["P/E Ratio"], errors='coerce')
             df_results["P/B Ratio"] = pd.to_numeric(df_results["P/B Ratio"], errors='coerce')
             df_results["Market Cap"] = pd.to_numeric(df_results["Market Cap"], errors='coerce')
             df_results["NPAT (TTM)"] = pd.to_numeric(df_results["NPAT (TTM)"], errors='coerce')
+            df_results["Net Debt"] = pd.to_numeric(df_results["Net Debt"], errors='coerce')
+            df_results["Enterprise Value"] = pd.to_numeric(df_results["Enterprise Value"], errors='coerce')
             
-            # Apply dynamic P/E and P/B filters
+            # Apply dynamic filters
             filtered_df = df_results[
                 (df_results["P/E Ratio"].isna() | (df_results["P/E Ratio"] <= max_pe)) &
                 (df_results["P/B Ratio"].isna() | (df_results["P/B Ratio"] <= max_pb))
             ]
             
-            # Apply the custom Market Capitalisation bracket filters
             filtered_df = filtered_df[
                 filtered_df["Market Cap"].apply(lambda x: matches_market_cap_bracket(x, selected_mc_brackets))
             ]
             
-            # Apply profitability toggle filter if checked
             if exclude_losses:
                 filtered_df = filtered_df[
                     filtered_df["NPAT (TTM)"].notna() & (filtered_df["NPAT (TTM)"] >= 0)
                 ]
             
             # 6. STREAMLIT DATA FRAME COLUMNS CONFIGURATION
+            # FIXED: Re-enforced specific native column configuration properties
             st.dataframe(
                 filtered_df, 
                 use_container_width=True,
                 column_config={
-                    "Price": st.column_config.NumberColumn("Price", format="$%.2f"),
+                    "Price": st.column_config.NumberColumn("Price", format="$%.3f"),
                     "P/E Ratio": st.column_config.NumberColumn("P/E Ratio", format="%.2f"),
                     "P/B Ratio": st.column_config.NumberColumn("P/B Ratio", format="%.2f"),
                     "Dividend Yield": st.column_config.NumberColumn("Dividend Yield", format="%.2f%%"),
@@ -198,14 +213,9 @@ if os.path.exists(csv_path):
                 }
             )
             
-            # Prepare CSV data for export
-            csv_df = filtered_df.copy()
-            if not csv_df.empty and "Dividend Yield" in csv_df.columns:
-                csv_df["Dividend Yield"] = csv_df["Dividend Yield"] * 100
-                
             # 7. EXPORT TO CSV FEATURE
             csv_buffer = io.BytesIO()
-            csv_df.to_csv(csv_buffer, index=False)
+            filtered_df.to_csv(csv_buffer, index=False)
             csv_bytes = csv_buffer.getvalue()
             
             st.download_button(
