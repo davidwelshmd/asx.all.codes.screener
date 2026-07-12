@@ -115,7 +115,7 @@ csv_p = os.path.join(
     c_dir, "asx_tickers.csv"
 )
 
-# DATA FETCH ENGINE
+# FIXED EX-LEASE DATA ENGINE
 @st.cache_data(
     show_spinner=False, 
     ttl=3600
@@ -150,22 +150,37 @@ def fetch_batch(tkrs, lbl):
                 if dy > 1.0:
                     dy = dy / 100.0
             
-            td = inf.get('totalDebt', 0)
-            tc = inf.get('totalCash', 0)
+            total_cash = inf.get('totalCash', 0)
+            tc = float(total_cash) if (total_cash and not pd.isna(total_cash)) else 0.0
             
-            if (
-                not td or pd.isna(td)
-            ):
-                td = 0.0
-            if (
-                not tc or pd.isna(tc)
-            ):
-                tc = 0.0
+            # FIXED: Target isolated interest-bearing borrowing vectors
+            # This completely bypasses any capitalized lease liabilities
+            pure_debt = 0.0
+            bs = t_obj.balance_sheet
+            
+            if bs is not None and not bs.empty:
+                # Isolate Non-Current Term Borrowings
+                if "Long Term Debt" in bs.index:
+                    lt_debt = bs.loc["Long Term Debt"].iloc[0]
+                    if not pd.isna(lt_debt):
+                        pure_debt += float(lt_debt)
                 
-            if td == 0.0 and tc == 0.0:
+                # Isolate Current Portion of Bank Notes/Loans
+                if "Short Long Term Debt" in bs.index:
+                    st_debt = bs.loc["Short Long Term Debt"].iloc[0]
+                    if not pd.isna(st_debt):
+                        pure_debt += float(st_debt)
+            
+            # Fallback insurance macro check if the itemised index vector was empty
+            if pure_debt == 0.0:
+                total_debt = inf.get('totalDebt', 0)
+                pure_debt = float(total_debt) if (total_debt and not pd.isna(total_debt)) else 0.0
+                
+            # Net Debt Calculation (Excluding Leases)
+            if pure_debt == 0.0 and tc == 0.0:
                 nd = None
             else:
-                nd = float(td) - float(tc)
+                nd = pure_debt - tc
             
             res.append({
                 "Ticker": sym,
@@ -346,3 +361,4 @@ if os.path.exists(csv_p):
         st.info("💡 Adjust filters & Run")
 else:
     st.error(f"Missing file: {csv_p}")
+
