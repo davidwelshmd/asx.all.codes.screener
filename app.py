@@ -5,229 +5,344 @@ import io
 import os
 import time
 
-# 1. PAGE LAYOUT CONFIGURATION
-st.set_page_config(page_title="ASX Equity Screener", layout="wide")
-st.title("📊 ASX Low P/E Valuation Screener")
-st.write("Configure filters below and click 'Run Screener' to fetch fresh data from Yahoo Finance.")
+# LAYOUT CONFIG
+st.set_page_config(
+    page_title="ASX",
+    layout="wide"
+)
+st.title("📊 ASX Screener")
+st.write("Click 'Run Screener'")
 
-# 2. SIDEBAR PARAMETERS 
-st.sidebar.header("Screener Filters")
+# SIDEBAR FILTERS
+st.sidebar.header("Filters")
 
-ticker_range = st.sidebar.selectbox(
-    "Select Ticker Alphabet Group",
-    options=["A-G", "H-L", "M-Q", "R-V", "W-Z", "ALL (Slow)"],
+t_range = st.sidebar.selectbox(
+    "Alphabet Group",
+    options=[
+        "A-G", "H-L", "M-Q", 
+        "R-V", "W-Z", "ALL"
+    ],
     index=0
 )
 
-max_pe = st.sidebar.slider("Maximum P/E Ratio Cutoff", min_value=5, max_value=40, value=20)
-max_pb = st.sidebar.slider("Maximum P/B Ratio Cutoff", min_value=0.1, max_value=10.0, value=2.0, step=0.1)
+max_pe = st.sidebar.slider(
+    "Max P/E", 
+    5, 40, 20
+)
+max_pb = st.sidebar.slider(
+    "Max P/B", 
+    0.1, 10.0, 2.0, 0.1
+)
 
-# Market Cap Category Filter
-market_cap_options = [
+mc_opts = [
     "Under $100 Million",
     "$100 - $500 Million",
     "$500 - $1,500 Million",
     "Over $1,500 Million"
 ]
-selected_mc_brackets = st.sidebar.multiselect(
-    "Market Capitalisation Brackets",
-    options=market_cap_options,
-    default=market_cap_options
+sel_mc = st.sidebar.multiselect(
+    "Market Cap",
+    options=mc_opts,
+    default=mc_opts
 )
 
-# Toggle: Filter Profitability
-exclude_losses = st.sidebar.toggle("Exclude Loss-Making Companies (NPAT < 0)", value=False)
+ex_losses = st.sidebar.toggle(
+    "Exclude Losses", 
+    value=False
+)
 
 st.sidebar.markdown("---")
-run_clicked = st.sidebar.button("🚀 Run Screener", use_container_width=True)
+btn_run = st.sidebar.button(
+    "🚀 Run Screener", 
+    use_container_width=True
+)
 
-# Helper function to map tickers to selected ranges and ensure they are standard 3-digit tickers
-def filter_ticker(ticker, range_selection):
-    ticker_str = str(ticker).strip().upper()
-    parts = ticker_str.split(".")
-    base_ticker = parts[0]
+# TICKER FILTER
+def filter_ticker(t, s_range):
+    t_str = str(t).strip().upper()
+    pts = t_str.split(".")
+    base = pts[0]
     
-    if len(base_ticker) != 3:
+    if len(base) != 3:
         return False
         
-    if range_selection == "ALL (Slow)":
+    if s_range == "ALL":
         return True
         
-    first_letter = base_ticker[0]
-    if not first_letter.isalpha():
+    f_let = base[0]
+    if not f_let.isalpha():
         return False
         
-    start_letter, end_letter = range_selection.split("-")
-    return start_letter <= first_letter <= end_letter
+    st_l, en_l = s_range.split("-")
+    return st_l <= f_let <= en_l
 
-# Helper function to classify market caps into your custom brackets
-def matches_market_cap_bracket(market_cap, selected_brackets):
-    if not selected_brackets:
+# MC MATCH
+def match_mc(mc, brackets):
+    if not brackets:
         return True
-    if pd.isna(market_cap) or market_cap is None:
+    if pd.isna(mc) or mc is None:
         return False
-        
-    mc_million = market_cap / 1_000_000
-    
-    if "Under $100 Million" in selected_brackets and mc_million < 100:
+    mcm = mc / 1_000_000
+    if (
+        "Under $100 Million" 
+        in brackets and mcm < 100
+    ):
         return True
-    if "$100 - $500 Million" in selected_brackets and 100 <= mc_million <= 500:
+    if (
+        "$100 - $500 Million" 
+        in brackets 
+        and 100 <= mcm <= 500
+    ):
         return True
-    if "$500 - $1,500 Million" in selected_brackets and 500 < mc_million <= 1500:
+    if (
+        "$500 - $1,500 Million" 
+        in brackets 
+        and 500 < mcm <= 1500
+    ):
         return True
-    if "Over $1,500 Million" in selected_brackets and mc_million > 1500:
+    if (
+        "Over $1,500 Million" 
+        in brackets and mcm > 1500
+    ):
         return True
-        
     return False
 
-# 3. DIRECT PATH DETECTION FOR CSV LOADING
-current_dir = os.path.dirname(os.path.abspath(__file__))
-csv_path = os.path.join(current_dir, "asx_tickers.csv")
+# CSV DIRECTORY PATH
+c_dir = os.path.dirname(
+    os.path.abspath(__file__)
+)
+csv_p = os.path.join(
+    c_dir, "asx_tickers.csv"
+)
 
-# 4. CACHED DATA FETCHING ENGINE 
-@st.cache_data(show_spinner=False, ttl=3600)
-def get_asx_data_for_batch(asx_tickers, range_label):
-    """Fetches ticker data for the filtered batch and caches it."""
-    results = []
+# DATA FETCH ENGINE
+@st.cache_data(
+    show_spinner=False, 
+    ttl=3600
+)
+def fetch_batch(tkrs, lbl):
+    res = []
+    p_bar = st.progress(0)
+    s_txt = st.empty()
     
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    for idx, symbol in enumerate(asx_tickers):
-        formatted_symbol = symbol if symbol.endswith(".AX") else f"{symbol}.AX"
-        status_text.text(f"Scanning {formatted_symbol} ({idx + 1}/{len(asx_tickers)}) in Group {range_label}...")
+    for idx, sym in enumerate(tkrs):
+        if sym.endswith(".AX"):
+            fsym = sym
+        else:
+            fsym = f"{sym}.AX"
+        s_txt.text(f"Scan {fsym}...")
         
         try:
-            ticker = yf.Ticker(formatted_symbol)
-            info = ticker.info
+            t_obj = yf.Ticker(fsym)
+            inf = t_obj.info
             
-            pe_ratio = info.get('trailingPE', None)
-            pb_ratio = info.get('priceToBook', None)
-            market_cap = info.get('marketCap', None)
-            npat = info.get('netIncomeToCommon', None)
-            current_price = info.get('currentPrice', None)
-            long_name = info.get('longName', symbol)
+            p = inf.get('currentPrice')
+            pe = inf.get('trailingPE')
+            pb = inf.get('priceToBook')
+            mc = inf.get('marketCap')
+            np = inf.get('netIncomeToCommon')
+            nm = inf.get('longName', sym)
+            ev = inf.get('enterpriseValue')
             
-            # FIXED: Extracted dividend yield is divided by 100 to map accurately to percentage views
-            div_yield = info.get('dividendYield', None)
-            if div_yield is not None:
-                div_yield = float(div_yield)
-                # If yfinance yields integer values like 7.73 instead of 0.0773, normalize it
-                if div_yield > 1.0:
-                    div_yield = div_yield / 100.0
+            dy = inf.get('dividendYield')
+            if dy is not None:
+                dy = float(dy)
+                if dy > 1.0:
+                    dy = dy / 100.0
+            
+            td = inf.get('totalDebt', 0)
+            tc = inf.get('totalCash', 0)
+            
+            if (
+                not td or pd.isna(td)
+            ):
+                td = 0.0
+            if (
+                not tc or pd.isna(tc)
+            ):
+                tc = 0.0
                 
-            ent_value = info.get('enterpriseValue', None)
-            
-            # FIXED: Explicitly sanitize dictionary outputs to calculate the Net Debt formula
-            total_debt = info.get('totalDebt', 0)
-            total_cash = info.get('totalCash', 0)
-            
-            # Force None values to zero for calculation purposes
-            td = float(total_debt) if (total_debt and not pd.isna(total_debt)) else 0.0
-            tc = float(total_cash) if (total_cash and not pd.isna(total_cash)) else 0.0
-            
-            # If both fields are empty, keep Net Debt as unknown
             if td == 0.0 and tc == 0.0:
-                net_debt = None
+                nd = None
             else:
-                net_debt = td - tc
+                nd = float(td) - float(tc)
             
-            results.append({
-                "Ticker": symbol.split(".")[0],
-                "Company Name": long_name,
-                "Price": current_price,
-                "P/E Ratio": pe_ratio,
-                "P/B Ratio": pb_ratio,
-                "Dividend Yield": div_yield,
-                "NPAT (TTM)": npat,
-                "Market Cap": market_cap,
-                "Net Debt": net_debt,
-                "Enterprise Value": ent_value
+            res.append({
+                "Ticker": sym,
+                "Company Name": nm,
+                "Price": p,
+                "P/E Ratio": pe,
+                "P/B Ratio": pb,
+                "Dividend Yield": dy,
+                "NPAT (TTM)": np,
+                "Market Cap": mc,
+                "Net Debt": nd,
+                "Enterprise Value": ev
             })
-            
             time.sleep(0.2)
-            
-        except Exception as e:
+        except Exception:
             pass
-            
-        progress_bar.progress((idx + 1) / len(asx_tickers))
-        
-    status_text.empty()
-    progress_bar.empty()
-    return pd.DataFrame(results)
+        p_bar.progress(
+            (idx + 1) / len(tkrs)
+        )
+    s_txt.empty()
+    p_bar.empty()
+    return pd.DataFrame(res)
 
-# 5. LOADING AND EXECUTION LOGIC
-if os.path.exists(csv_path):
-    if run_clicked:
-        df_tickers = pd.read_csv(csv_path, header=None)
-        raw_ticker_list = df_tickers.iloc[:, 0].tolist()
+# EVALUATION MATRIX
+if os.path.exists(csv_p):
+    if btn_run:
+        df_t = pd.read_csv(
+            csv_p, header=None
+        )
+        t_lst = df_t.iloc[:, 0].tolist()
+        t_clean = [
+            str(x).strip().upper() 
+            for x in t_lst
+        ]
+        f_tkrs = [
+            x for x in t_clean 
+            if filter_ticker(x, t_range)
+        ]
         
-        filtered_tickers = [t for t in raw_ticker_list if filter_ticker(t, ticker_range)]
-        
-        if filtered_tickers:
-            with st.spinner("Fetching data from Yahoo Finance..."):
-                st.session_state.raw_data = get_asx_data_for_batch(filtered_tickers, ticker_range)
+        if f_tkrs:
+            with st.spinner("Wait..."):
+                st.session_state.raw = (
+                    fetch_batch(
+                        f_tkrs, t_range
+                    )
+                )
         else:
-            st.warning("No tickers found matching this alphabet group and length condition.")
+            st.warning("No matches")
 
-    if "raw_data" in st.session_state and st.session_state.raw_data is not None:
-        df_results = st.session_state.raw_data.copy()
+    if (
+        "raw" in st.session_state 
+        and st.session_state.raw 
+        is not None
+    ):
+        df_r = st.session_state.raw.copy()
         
-        if not df_results.empty:
-            df_results["P/E Ratio"] = pd.to_numeric(df_results["P/E Ratio"], errors='coerce')
-            df_results["P/B Ratio"] = pd.to_numeric(df_results["P/B Ratio"], errors='coerce')
-            df_results["Market Cap"] = pd.to_numeric(df_results["Market Cap"], errors='coerce')
-            df_results["NPAT (TTM)"] = pd.to_numeric(df_results["NPAT (TTM)"], errors='coerce')
-            df_results["Net Debt"] = pd.to_numeric(df_results["Net Debt"], errors='coerce')
-            df_results["Enterprise Value"] = pd.to_numeric(df_results["Enterprise Value"], errors='coerce')
+        if not df_r.empty:
+            v_cols = [
+                "P/E Ratio", "P/B Ratio",
+                "Market Cap", "NPAT (TTM)",
+                "Net Debt", "Price",
+                "Enterprise Value"
+            ]
+            for c in v_cols:
+                df_r[c] = pd.to_numeric(
+                    df_r[c], 
+                    errors='coerce'
+                )
             
-            # Apply dynamic filters
-            filtered_df = df_results[
-                (df_results["P/E Ratio"].isna() | (df_results["P/E Ratio"] <= max_pe)) &
-                (df_results["P/B Ratio"].isna() | (df_results["P/B Ratio"] <= max_pb))
+            # RUNTIME METRIC FILTER
+            f_df = df_r[
+                (
+                    df_r["P/E Ratio"].isna() 
+                    | (
+                        df_r["P/E Ratio"] 
+                        <= max_pe
+                    )
+                ) &
+                (
+                    df_r["P/B Ratio"].isna() 
+                    | (
+                        df_r["P/B Ratio"] 
+                        <= max_pb
+                    )
+                )
             ]
             
-            filtered_df = filtered_df[
-                filtered_df["Market Cap"].apply(lambda x: matches_market_cap_bracket(x, selected_mc_brackets))
+            f_df = f_df[
+                f_df["Market Cap"].apply(
+                    lambda x: match_mc(
+                        x, sel_mc
+                    )
+                )
             ]
             
-            if exclude_losses:
-                filtered_df = filtered_df[
-                    filtered_df["NPAT (TTM)"].notna() & (filtered_df["NPAT (TTM)"] >= 0)
+            if ex_losses:
+                f_df = f_df[
+                    f_df["NPAT (TTM)"]
+                    .notna() & 
+                    (
+                        f_df["NPAT (TTM)"] 
+                        >= 0
+                    )
                 ]
-            
-            # 6. STREAMLIT DATA FRAME COLUMNS CONFIGURATION
-            # FIXED: Re-enforced specific native column configuration properties
+
+            # DATA FRAME DISPLAY RENDER
             st.dataframe(
-                filtered_df, 
+                f_df, 
                 use_container_width=True,
                 column_config={
-                    "Price": st.column_config.NumberColumn("Price", format="$%.3f"),
-                    "P/E Ratio": st.column_config.NumberColumn("P/E Ratio", format="%.2f"),
-                    "P/B Ratio": st.column_config.NumberColumn("P/B Ratio", format="%.2f"),
-                    "Dividend Yield": st.column_config.NumberColumn("Dividend Yield", format="%.2f%%"),
-                    "NPAT (TTM)": st.column_config.NumberColumn("NPAT (TTM)", format="$%.2f a"),
-                    "Market Cap": st.column_config.NumberColumn("Market Cap", format="$%.2f a"),
-                    "Net Debt": st.column_config.NumberColumn("Net Debt", format="$%.2f a"),
-                    "Enterprise Value": st.column_config.NumberColumn("Enterprise Value", format="$%.2f a")
+                    "Price": 
+                    st.column_config
+                    .NumberColumn(
+                        "Price", 
+                        format="$%.3f"
+                    ),
+                    "P/E Ratio": 
+                    st.column_config
+                    .NumberColumn(
+                        "P/E Ratio", 
+                        format="%.2f"
+                    ),
+                    "P/B Ratio": 
+                    st.column_config
+                    .NumberColumn(
+                        "P/B Ratio", 
+                        format="%.2f"
+                    ),
+                    "Dividend Yield": 
+                    st.column_config
+                    .NumberColumn(
+                        "Div Yield", 
+                        format="%.2f%%"
+                    ),
+                    "NPAT (TTM)": 
+                    st.column_config
+                    .NumberColumn(
+                        "NPAT TTM", 
+                        format="$%.2f a"
+                    ),
+                    "Market Cap": 
+                    st.column_config
+                    .NumberColumn(
+                        "Market Cap", 
+                        format="$%.2f a"
+                    ),
+                    "Net Debt": 
+                    st.column_config
+                    .NumberColumn(
+                        "Net Debt", 
+                        format="$%.2f a"
+                    ),
+                    "Enterprise Value": 
+                    st.column_config
+                    .NumberColumn(
+                        "EV", 
+                        format="$%.2f a"
+                    )
                 }
             )
             
-            # 7. EXPORT TO CSV FEATURE
-            csv_buffer = io.BytesIO()
-            filtered_df.to_csv(csv_buffer, index=False)
-            csv_bytes = csv_buffer.getvalue()
+            # DOWNLOAD CONTROLLER
+            buf = io.BytesIO()
+            f_df.to_csv(
+                buf, index=False
+            )
+            b_val = buf.getvalue()
             
             st.download_button(
-                label="📥 Download Filtered List as CSV",
-                data=csv_bytes,
-                file_name=f"asx_screener_{ticker_range.lower().replace(' ', '_')}.csv",
+                label="📥 Download CSV",
+                data=b_val,
+                file_name="asx.csv",
                 mime="text/csv"
             )
-            
         else:
-            st.warning("No data retrieved for this batch.")
+            st.warning("No data rows found")
     else:
-        st.info("💡 Adjust your filters in the sidebar and click **'Run Screener'** to start scanning.")
+        st.info("💡 Adjust filters & Run")
 else:
-    st.error(f"Missing configuration asset. Please place your 'asx_tickers.csv' file inside: {current_dir}")
+    st.error(f"Missing file: {csv_p}")
