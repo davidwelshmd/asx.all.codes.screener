@@ -14,9 +14,10 @@ st.write("Configure your filters below and press 'Run Screener' to scan your ASX
 if "run_screener" not in st.session_state:
     st.session_state.run_screener = False
 
-# 2. SIDEBAR PARAMETERS (Moved out of st.form to resolve the multiselect freeze bug)
+# 2. SIDEBAR PARAMETERS 
 st.sidebar.header("Screener Filters")
 
+# FIXED: Added the missing Alphabet Group Selector back to the sidebar layout
 ticker_range = st.sidebar.selectbox(
     "Select Ticker Alphabet Group",
     options=["A-G", "H-L", "M-Q", "R-V", "W-Z", "ALL (Slow)"],
@@ -26,7 +27,7 @@ ticker_range = st.sidebar.selectbox(
 max_pe = st.sidebar.slider("Maximum P/E Ratio Cutoff", min_value=5, max_value=40, value=20)
 max_pb = st.sidebar.slider("Maximum P/B Ratio Cutoff", min_value=0.1, max_value=10.0, value=2.0, step=0.1)
 
-# Market Cap Category Filter (Now fully clickable)
+# Market Cap Category Filter (Now fully clickable with fixed context)
 market_cap_options = [
     "Under $100 Million",
     "$100 - $500 Million",
@@ -52,17 +53,19 @@ if st.sidebar.button("🚀 Run Screener", use_container_width=True):
 def filter_ticker(ticker, range_selection):
     ticker_str = str(ticker).strip().upper()
     
-    # Remove standard '.AX' suffix if present to accurately check length
-    clean_ticker = ticker_str.split(".")[0]
+    # Remove standard '.AX' suffix if present
+    # Example: "BHP.AX" -> ["BHP", "AX"] -> base_ticker = "BHP"
+    parts = ticker_str.split(".")
+    base_ticker = parts[0]
     
     # Enforce strict 3-digit rule (removes hybrids like WBCPL, MQGPF, or options)
-    if len(clean_ticker) != 3:
+    if len(base_ticker) != 3:
         return False
         
     if range_selection == "ALL (Slow)":
         return True
         
-    first_letter = clean_ticker[0]
+    first_letter = base_ticker[0]
     if not first_letter.isalpha():
         return False
         
@@ -215,3 +218,4 @@ if os.path.exists(csv_path):
         st.info("💡 Adjust your filters in the sidebar and click **'Run Screener'** to start scanning.")
 else:
     st.error(f"Missing configuration asset. Please place your 'asx_tickers.csv' file inside: {current_dir}")
+
